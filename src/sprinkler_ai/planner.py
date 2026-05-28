@@ -312,21 +312,33 @@ def ask_gemini(config: Config, prompt: str) -> str:
     return response.get("response", "")
 
 
-def make_plan(
-    config: Config,
-    weather: WeatherWindow,
-    rain_sensor_wet: bool,
-    recent_history: list[dict[str, Any]],
-    vision: dict[str, Any] | None = None,
-    soil_readings: dict[int, int] | None = None,
-) -> Plan:
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-    now_local = datetime.now(ZoneInfo(config.location.timezone))
-    current_local_time = now_local.strftime("%Y-%m-%d %H:%M %Z (%A)")
-    user_prompt = _build_user_prompt(
-        config, weather, rain_sensor_wet, recent_history, current_local_time,
-        vision, soil_readings,
+def make_plan(config, weather=None, rain_sensor_wet=False, recent_history=None, vision=None, soil_readings=None) -> Plan:
+
+    ZONE_WATERING = {
+        1: 10,
+        2: 12,
+        3: 6,
+        4: 8,
+    }
+
+    zones = [
+        ZonePlan(
+            zone=z.number,
+            minutes=ZONE_WATERING.get(z.number, 0),
+            reason="manual rule-based schedule",
+            cycles=1,
+            soak_minutes=0,
+        )
+        for z in config.zones
+        if ZONE_WATERING.get(z.number, 0) > 0
+    ]
+
+    return Plan(
+        skip=False,
+        reason="manual mode (AI removed)",
+        zones=zones,
+        raw_response="manual override",
+        recommendations=[],
     )
 
     try:

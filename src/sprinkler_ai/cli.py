@@ -217,7 +217,7 @@ async def _run(dry_run: bool) -> int:
         obs_count = len(vision.get("observations", []))
         print(f"      vision: usable={usable}, health={health}, {obs_count} observations")
 
-    print(f"[4/5] Asking Claude ({config.model}) for plan...")
+    print("[4/5] Generating manual irrigation plan...")
     plan = make_plan(config, weather, rain_wet, history, vision=vision,
                     soil_readings=soil_readings or None)
     _print_plan(plan)
