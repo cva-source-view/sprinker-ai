@@ -3,33 +3,63 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from dataclasses import asdict
 
 from .config import Config
-from .history import append_entry
 from .weather import fetch_weather
-from .engine import run_engine   # <-- your new irrigation engine
+from .engine import run_engine
 
 
 # -----------------------------
-# PRINT ENGINE OUTPUT CLEANLY
+# CLEAN PRETTY PRINT
 # -----------------------------
-def _print_engine_output(result: dict) -> None:
-    print("\n=== ENGINE OUTPUT ===")
-    print(result)
+def _print_engine(result: dict) -> None:
+    debug = result.get("debug", {})
+    schedule = result.get("schedule", {})
 
-    print("\nDecision:")
-    print("WATER" if result["water"] else "SKIP")
+    print("\n=== FULL IRRIGATION DECISION ===\n")
 
-    print(f"Reason: {result['reason']}")
+    # ---------------- WEATHER SUMMARY ----------------
+    print("🌡 WEATHER MODEL")
+    print(f"Avg High: {debug.get('avg_high_f', 'N/A')}°F")
+    print(f"Avg Low:  {debug.get('avg_low_f', 'N/A')}°F\n")
 
-    if "schedule" in result:
-        print("\nSchedule:")
-        print(result["schedule"])
+    # ---------------- RAIN ----------------
+    print("🌧 RAIN")
+    print(f"Past Rain:      {debug.get('rain_past', 0):.1f} mm")
+    print(f"Forecast Rain:  {debug.get('rain_forecast', 0):.1f} mm\n")
+
+    # ---------------- ET ----------------
+    print("🌿 EVAPOTRANSPIRATION")
+    print(f"ET Total: {debug.get('et', 0):.1f} mm\n")
+
+    # ---------------- MODEL ----------------
+    print("⚙ MODEL")
+    print(f"Score:        {debug.get('score', 0):.2f}")
+    print(f"Temp Factor:  {debug.get('temp_factor', 1.0)}\n")
+
+    # ---------------- RULES ----------------
+    print("🕒 RULES")
+    print("Allowed watering window: 06:00–08:00 or 18:30–21:00\n")
+
+    # ---------------- DECISION ----------------
+    print("🚿 DECISION")
+    print("WATER\n" if result["water"] else "SKIP\n")
+    print(f"Reason: {result['reason']}\n")
+
+    # ---------------- SCHEDULE ----------------
+    print("📅 SCHEDULE")
+
+    if schedule:
+        print(f"Run Minutes: {schedule.get('run_minutes', 0)}\n")
+
+        for w in schedule.get("windows", []):
+            print(f"• {w['label'].upper()}")
+            print(f"  Start: {w['start']}")
+            print(f"  Duration: {w['duration']} min\n")
 
 
 # -----------------------------
-# MAIN RUN
+# MAIN
 # -----------------------------
 async def _run(dry_run: bool) -> int:
     config = Config.load()
@@ -41,56 +71,31 @@ async def _run(dry_run: bool) -> int:
         config.location.timezone,
     )
 
-    print("[2/3] Running irrigation engine...\n")
-
-    # 👇 THIS is your entire decision system now
+    print("[2/3] Running irrigation engine...")
     result = run_engine(weather, config)
 
-    _print_engine_output(result)
+    _print_engine(result)
 
-    print("\n[3/3] Execution stage")
+    print("[3/3] Execution stage")
 
     if dry_run:
-        print("Dry-run mode — no hardware control executed.")
-
-        append_entry({
-            "action": "dry_run",
-            "engine_result": result,
-            "weather": weather.to_prompt_dict(),
-        })
+        print("Dry-run mode — no hardware executed.")
         return 0
 
     if not result["water"]:
-        print("SKIP TODAY — no watering needed.")
-
-        append_entry({
-            "action": "skip",
-            "engine_result": result,
-            "weather": weather.to_prompt_dict(),
-        })
+        print("SKIP — no watering needed.")
         return 0
 
-    # -----------------------------
-    # FUTURE: hardware integration
-    # (LinkTap / timers / Pi GPIO)
-    # -----------------------------
     print("Would execute schedule:")
     print(result["schedule"])
-
-    append_entry({
-        "action": "watered",
-        "engine_result": result,
-        "weather": weather.to_prompt_dict(),
-    })
-
     return 0
 
 
 # -----------------------------
-# CLI ENTRYPOINT
+# ENTRYPOINT
 # -----------------------------
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Weather-based sprinkler engine (manual mode)")
+    parser = argparse.ArgumentParser(description="Sprinkler Engine (rule-based)")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
