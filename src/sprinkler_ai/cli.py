@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
+from datetime import datetime
 
 from .config import Config
 from .weather import fetch_weather
@@ -10,11 +11,18 @@ from .engine import run_engine
 
 
 # -----------------------------
+# HELPERS
+# -----------------------------
+def _is_alternate_day() -> bool:
+    return datetime.now().day % 2 == 1
+
+
+# -----------------------------
 # CLEAN PRETTY PRINT
 # -----------------------------
 def _print_engine(result: dict) -> None:
     debug = result.get("debug", {})
-    schedule = result.get("schedule", {})
+    schedule = result.get("schedule")
 
     print("\n=== FULL IRRIGATION DECISION ===\n")
 
@@ -39,7 +47,12 @@ def _print_engine(result: dict) -> None:
 
     # ---------------- RULES ----------------
     print("🕒 RULES")
-    print("Allowed watering window: 06:00–08:00 or 18:30–21:00\n")
+    print("Allowed watering window: 06:00–08:00")
+    print(
+        f"Alternate-day schedule: "
+        f"{'YES (watering day)' if _is_alternate_day() else 'NO (skip day)'}"
+    )
+    print("Extreme heat override: 95°F+\n")
 
     # ---------------- DECISION ----------------
     print("🚿 DECISION")
@@ -56,6 +69,8 @@ def _print_engine(result: dict) -> None:
             print(f"• {w['label'].upper()}")
             print(f"  Start: {w['start']}")
             print(f"  Duration: {w['duration']} min\n")
+    else:
+        print("No watering scheduled.\n")
 
 
 # -----------------------------
