@@ -1,45 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from pathlib import Path
-import json
-
-from .weather import fetch_weather
-
-# =========================================================
-# LOG FILE (state memory across days)
-# =========================================================
-
-LOG_PATH = Path("data/watering_log.json")
-
-
-def load_log() -> dict:
-    if not LOG_PATH.exists():
-        return {
-            "last_watering_date": None,
-            "last_rain_date": None,
-            "last_moisture_date": None,
-        }
-    return json.loads(LOG_PATH.read_text())
-
-
-def save_log(data: dict):
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOG_PATH.write_text(json.dumps(data, indent=2))
-
-
-def today_str():
-    return datetime.now().strftime("%Y-%m-%d")
-
-
-def days_since(date_str: str | None) -> int:
-    if not date_str:
-        return 999
-    try:
-        d = datetime.strptime(date_str, "%Y-%m-%d")
-        return (datetime.now() - d).days
-    except:
-        return 999
+from .history import last_event
 
 
 # =========================================================
@@ -52,6 +14,27 @@ def c_to_f(c: float) -> float:
 
 def avg(vals):
     return sum(vals) / len(vals) if vals else 0
+
+
+# =========================================================
+# HISTORY-BASED LOGIC
+# =========================================================
+
+def is_alternate_day() -> bool:
+    """
+    Uses actual watering history instead of calendar day.
+    Prevents drift from rain skips or missed cycles.
+    """
+
+    last = last_event("watered")
+
+    if not last:
+        return True  # first run always allowed
+
+    last_date = datetime.strptime(last, "%Y-%m-%d")
+    today = datetime.now()
+
+    return (today - last_date).days >= 2
 
 
 # =========================================================
@@ -72,7 +55,7 @@ def compute_water_demand(weather):
     avg_high = avg(highs)
     avg_low = avg(lows)
 
-    # temperature pressure
+    # temperature boost
     if avg_high >= 95:
         temp_factor = 1.35
     elif avg_high >= 90:
@@ -84,7 +67,7 @@ def compute_water_demand(weather):
 
     score = (et * temp_factor) - (rain_forecast * 1.2) - (rain_past * 0.5)
 
-    # soil memory damping
+    # soil memory clamp
     if rain_past < 2 and score > 25:
         score *= 0.75
 
@@ -100,43 +83,28 @@ def compute_water_demand(weather):
 
 
 # =========================================================
-# DECISION LOGIC
+# DECISION RULES
 # =========================================================
 
-def should_water(data: dict, hour: int, log: dict):
+def should_water(data: dict, hour: int):
     avg_temp = data["avg_high_f"]
 
-    # -------------------------
-    # MORNING ONLY RULE
-    # -------------------------
+    # Morning only rule
     if hour >= 8:
         return False, "Outside morning window"
 
-    # -------------------------
-    # RAIN SAFETY RULES
-    # -------------------------
+    # Rain rules
     if data["rain_forecast"] >= 2.5:
-        return False, "Rain expected soon"
+        return False, "Rain expected"
 
-    if (data["rain_forecast"] + data["rain_past"]) >= 5:
+    if data["rain_past"] + data["rain_forecast"] >= 5:
         return False, "Recent rain sufficient"
 
-    # -------------------------
-    # ALTERNATE DAY LOGIC (FIXED)
-    # -------------------------
-    last_watered_days = days_since(log.get("last_watering_date"))
+    # Alternate day logic (FIXED)
+    if avg_temp < 95 and not is_alternate_day():
+        return False, "Alternate-day schedule"
 
-    # allow override in heat
-    extreme_heat = avg_temp >= 95
-
-    if not extreme_heat:
-        # if watered yesterday → skip today
-        if last_watered_days <= 1:
-            return False, f"Alternate-day rule (last watered {last_watered_days} day(s) ago)"
-
-    # -------------------------
-    # LOW DEMAND RULE
-    # -------------------------
+    # demand floor
     if data["score"] < 8:
         return False, "Low demand"
 
@@ -152,10 +120,9 @@ def runtime_minutes(score: float) -> int:
 
 
 def build_schedule(weather, hour: int = 6):
-    log = load_log()
     data = compute_water_demand(weather)
 
-    decision, reason = should_water(data, hour, log)
+    decision, reason = should_water(data, hour)
 
     if not decision:
         return {
@@ -185,36 +152,27 @@ def build_schedule(weather, hour: int = 6):
 
 
 # =========================================================
-# ENGINE ENTRY
+# ENTRY POINT FOR CLI
 # =========================================================
 
-def run_engine(weather, config=None):
-    result = build_schedule(weather, hour=6)
-
-    # update watering log ONLY if watering happens
-    if result["water"]:
-        log = load_log()
-        log["last_watering_date"] = today_str()
-        save_log(log)
-
-    return result
+def run_engine(weather, config):
+    return build_schedule(weather, hour=6)
 
 
 # =========================================================
-# TEST
+# LOCAL TEST
 # =========================================================
 
 def test():
+    from .weather import fetch_weather
+
     weather = fetch_weather(
         39.74,
         -104.99,
         "America/Denver"
     )
 
-    result = build_schedule(weather)
-
-    print("\n=== ENGINE OUTPUT ===")
-    print(result)
+    print(build_schedule(weather))
 
 
 if __name__ == "__main__":
