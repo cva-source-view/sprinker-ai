@@ -6,29 +6,47 @@ import json
 
 from .weather import fetch_weather
 
+
 # =========================================================
-# LOG FILE (state memory across days)
+# PATHS (STATE + LOGS)
 # =========================================================
 
-LOG_PATH = Path("data/watering_log.json")
+DATA_DIR = Path("data")
+DATA_DIR.mkdir(exist_ok=True)
+
+WATER_LOG = DATA_DIR / "watering_log.json"
+EVENT_LOG = DATA_DIR / "sprinkler.log"
 
 
-def load_log() -> dict:
-    if not LOG_PATH.exists():
+# =========================================================
+# LOGGING (replaces logger.py)
+# =========================================================
+
+def log_event(msg: str):
+    EVENT_LOG.parent.mkdir(exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    with open(EVENT_LOG, "a") as f:
+        f.write(f"[{timestamp}] {msg}\n")
+
+
+# =========================================================
+# STATE MEMORY (replaces watering_log.py)
+# =========================================================
+
+def load_state() -> dict:
+    if not WATER_LOG.exists():
         return {
-            "last_watering_date": None,
-            "last_rain_date": None,
-            "last_moisture_date": None,
+            "last_watering_date": None
         }
-    return json.loads(LOG_PATH.read_text())
+    return json.loads(WATER_LOG.read_text())
 
 
-def save_log(data: dict):
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    LOG_PATH.write_text(json.dumps(data, indent=2))
+def save_state(state: dict):
+    WATER_LOG.write_text(json.dumps(state, indent=2))
 
 
-def today_str():
+def today():
     return datetime.now().strftime("%Y-%m-%d")
 
 
@@ -55,10 +73,10 @@ def avg(vals):
 
 
 # =========================================================
-# CORE MODEL
+# CORE WEATHER SCORING
 # =========================================================
 
-def compute_water_demand(weather):
+def compute_score(weather):
     past = weather.past
     forecast = weather.forecast
 
@@ -67,12 +85,8 @@ def compute_water_demand(weather):
     rain_past = sum(d.precipitation_mm for d in past)
 
     highs = [c_to_f(d.temp_max_c) for d in forecast]
-    lows = [c_to_f(d.temp_min_c) for d in forecast]
-
     avg_high = avg(highs)
-    avg_low = avg(lows)
 
-    # temperature pressure
     if avg_high >= 95:
         temp_factor = 1.35
     elif avg_high >= 90:
@@ -84,7 +98,6 @@ def compute_water_demand(weather):
 
     score = (et * temp_factor) - (rain_forecast * 1.2) - (rain_past * 0.5)
 
-    # soil memory damping
     if rain_past < 2 and score > 25:
         score *= 0.75
 
@@ -94,49 +107,37 @@ def compute_water_demand(weather):
         "rain_forecast": round(rain_forecast, 2),
         "rain_past": round(rain_past, 2),
         "avg_high_f": round(avg_high, 1),
-        "avg_low_f": round(avg_low, 1),
         "temp_factor": temp_factor,
     }
 
 
 # =========================================================
-# DECISION LOGIC
+# DECISION ENGINE
 # =========================================================
 
-def should_water(data: dict, hour: int, log: dict):
+def decide(data: dict, hour: int, state: dict):
     avg_temp = data["avg_high_f"]
 
-    # -------------------------
-    # MORNING ONLY RULE
-    # -------------------------
+    # ---------------- MORNING ONLY ----------------
     if hour >= 8:
         return False, "Outside morning window"
 
-    # -------------------------
-    # RAIN SAFETY RULES
-    # -------------------------
+    # ---------------- RAIN SAFETY ----------------
     if data["rain_forecast"] >= 2.5:
         return False, "Rain expected soon"
 
-    if (data["rain_forecast"] + data["rain_past"]) >= 5:
+    if data["rain_forecast"] + data["rain_past"] >= 5:
         return False, "Recent rain sufficient"
 
-    # -------------------------
-    # ALTERNATE DAY LOGIC (FIXED)
-    # -------------------------
-    last_watered_days = days_since(log.get("last_watering_date"))
+    # ---------------- ALTERNATE DAY MEMORY ----------------
+    last_watered = days_since(state.get("last_watering_date"))
 
-    # allow override in heat
     extreme_heat = avg_temp >= 95
 
-    if not extreme_heat:
-        # if watered yesterday → skip today
-        if last_watered_days <= 1:
-            return False, f"Alternate-day rule (last watered {last_watered_days} day(s) ago)"
+    if not extreme_heat and last_watered <= 1:
+        return False, f"Alternate-day rule ({last_watered} day gap)"
 
-    # -------------------------
-    # LOW DEMAND RULE
-    # -------------------------
+    # ---------------- LOW DEMAND ----------------
     if data["score"] < 8:
         return False, "Low demand"
 
@@ -151,13 +152,14 @@ def runtime_minutes(score: float) -> int:
     return max(5, min(20, int(score * 0.6)))
 
 
-def build_schedule(weather, hour: int = 6):
-    log = load_log()
-    data = compute_water_demand(weather)
+def build_engine(weather, hour: int = 6):
+    state = load_state()
+    data = compute_score(weather)
 
-    decision, reason = should_water(data, hour, log)
+    ok, reason = decide(data, hour, state)
 
-    if not decision:
+    if not ok:
+        log_event(f"SKIP: {reason}")
         return {
             "water": False,
             "reason": reason,
@@ -166,6 +168,12 @@ def build_schedule(weather, hour: int = 6):
         }
 
     minutes = runtime_minutes(data["score"])
+
+    log_event(f"WATER: {minutes} min (score {data['score']})")
+
+    # update memory
+    state["last_watering_date"] = today()
+    save_state(state)
 
     return {
         "water": True,
@@ -185,19 +193,11 @@ def build_schedule(weather, hour: int = 6):
 
 
 # =========================================================
-# ENGINE ENTRY
+# ENTRY POINT (CLI USE)
 # =========================================================
 
 def run_engine(weather, config=None):
-    result = build_schedule(weather, hour=6)
-
-    # update watering log ONLY if watering happens
-    if result["water"]:
-        log = load_log()
-        log["last_watering_date"] = today_str()
-        save_log(log)
-
-    return result
+    return build_engine(weather, hour=6)
 
 
 # =========================================================
@@ -211,7 +211,7 @@ def test():
         "America/Denver"
     )
 
-    result = build_schedule(weather)
+    result = build_engine(weather)
 
     print("\n=== ENGINE OUTPUT ===")
     print(result)

@@ -7,7 +7,7 @@ from datetime import datetime
 
 from .config import Config
 from .weather import fetch_weather
-from .engine import run_engine
+from .core import run_engine
 
 
 # -----------------------------
