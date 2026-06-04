@@ -1,24 +1,30 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
-from datetime import datetime
 
 HISTORY_FILE = Path("data/history.jsonl")
 HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
-def append_event(event: str):
+def log_event(entry: dict) -> None:
+    """
+    Append a structured event to history.jsonl
+    """
     entry = {
-        "event": event,
-        "date": datetime.now().strftime("%Y-%m-%d")
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        **entry
     }
 
     with open(HISTORY_FILE, "a") as f:
         f.write(json.dumps(entry) + "\n")
 
 
-def last_event(event_name: str):
+def get_last_event(event_type: str):
+    """
+    Returns last matching event from history
+    """
     if not HISTORY_FILE.exists():
         return None
 
@@ -27,10 +33,24 @@ def last_event(event_name: str):
     with open(HISTORY_FILE, "r") as f:
         for line in f:
             try:
-                obj = json.loads(line)
-                if obj.get("event") == event_name:
-                    last = obj["date"]
-            except:
+                data = json.loads(line)
+                if data.get("type") == event_type:
+                    last = data
+            except Exception:
                 continue
 
     return last
+
+
+def days_since(event_type: str) -> int:
+    """
+    How many days since last event type occurred
+    """
+    last = get_last_event(event_type)
+    if not last:
+        return 999
+
+    last_time = datetime.fromisoformat(last["timestamp"])
+    now = datetime.now(timezone.utc)
+
+    return (now - last_time).days

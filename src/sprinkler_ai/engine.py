@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from .history import last_event
+from .history import get_last_event, days_since, log_event
 
 
 # =========================================================
@@ -26,7 +26,7 @@ def is_alternate_day() -> bool:
     Prevents drift from rain skips or missed cycles.
     """
 
-    last = last_event("watered")
+    last = get_last_event("watered")
 
     if not last:
         return True  # first run always allowed
@@ -155,8 +155,22 @@ def build_schedule(weather, hour: int = 6):
 # ENTRY POINT FOR CLI
 # =========================================================
 
+from .history import log_event
+
+
 def run_engine(weather, config):
-    return build_schedule(weather, hour=6)
+    result = build_schedule(weather, hour=6)
+
+    # ---------------- LOG EVERYTHING ----------------
+    log_event({
+        "type": "water" if result["water"] else "skip",
+        "decision": result["water"],
+        "reason": result["reason"],
+        "weather": result["debug"],
+        "schedule": result["schedule"],
+    })
+
+    return result
 
 
 # =========================================================
