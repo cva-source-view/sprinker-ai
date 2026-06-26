@@ -10,11 +10,11 @@ HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 def log_event(entry: dict) -> None:
     """
-    Append a structured event to history.jsonl
+    Append structured event to history.jsonl
     """
     entry = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        **entry
+        **entry,
     }
 
     with open(HISTORY_FILE, "a") as f:
@@ -23,7 +23,7 @@ def log_event(entry: dict) -> None:
 
 def get_last_event(event_type: str):
     """
-    Returns last matching event from history
+    Return most recent matching action
     """
     if not HISTORY_FILE.exists():
         return None
@@ -34,19 +34,29 @@ def get_last_event(event_type: str):
         for line in f:
             try:
                 data = json.loads(line)
-                if data.get("type") == event_type:
+
+                if data.get("action") == event_type:
                     last = data
+
             except Exception:
                 continue
 
     return last
 
 
+def last_event(event_type: str):
+    """
+    Compatibility alias
+    """
+    return get_last_event(event_type)
+
+
 def days_since(event_type: str) -> int:
     """
-    How many days since last event type occurred
+    Days since last matching action
     """
     last = get_last_event(event_type)
+
     if not last:
         return 999
 
